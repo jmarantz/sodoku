@@ -1,0 +1,2 @@
+# sodoku
+Experimental Sodoku solver
