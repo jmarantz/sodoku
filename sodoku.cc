@@ -111,10 +111,11 @@ public:
       fprintf(stdout, "      %d      ", value_);
     }
   }
+
   bool assignIfDetermined() {
     if (possible_values_.size() == 1) {
-      assert(setValue(possible_values_[0]));
-      possible_values_.clear();
+      assert(setValue(*possible_values_.begin()));
+      assert(possible_values_.empty());
       return true;
     }
     return false;
@@ -142,11 +143,15 @@ public:
     }
   }
 
+  void removeAvailable(int value) {
+    possible_values_.erase(value);
+  }
+
 private:
   int value_{kUnset};
   int row_{-1};
   int col_{-1};
-  std::vector<int> possible_values_;
+  std::set<int> possible_values_;
   std::vector<Container*> containers_;
 };
 
@@ -164,6 +169,9 @@ public:
   }
 
   bool claimValue(int value) {
+    for (Cell* cell : cells_) {
+      cell->removeAvailable(value);
+    }
     return available_.erase(value) == 1;
   }
 
@@ -210,7 +218,8 @@ public:
   void sortCellsByAvailableCount();
   void print();
   bool assignDeterminedCells();
-  
+  void computeAvailable();
+
 private:
   void populateContainerNames(const char* label, int num, Container* containers) {
     char buf[100];
@@ -224,7 +233,7 @@ private:
   Container rows_[kNumRows];
   Container columns_[kNumCols];
   Container boxes_[kNumBoxes];
-  std::vector<Cell*> unassigned_cells_;
+  std::set<Cell*> unassigned_cells_;
 };
 
 void Cell::computePossibleValues() {
@@ -232,13 +241,13 @@ void Cell::computePossibleValues() {
     return;
   }
   assert(containers_.size() == 3);
-  std::vector<int> temp;
+  std::set<int> temp;
   std::set_intersection(containers_[0]->available_.begin(), containers_[0]->available_.end(),
                         containers_[1]->available_.begin(), containers_[1]->available_.end(),
-                        std::back_inserter(temp));
+                        std::inserter(temp, temp.end()));
   possible_values_.clear();
   std::set_intersection(containers_[2]->available_.begin(), containers_[2]->available_.end(),
-                        temp.begin(), temp.end(), std::back_inserter(possible_values_));
+                        temp.begin(), temp.end(), std::inserter(possible_values_, possible_values_.end()));
 }
 
 bool Cell::setValue(int value) {
@@ -257,15 +266,18 @@ bool Cell::setValue(int value) {
   return ret;
 }
 
-void Board::sortCellsByAvailableCount() {
-  unassigned_cells_.clear();
+void Board::computeAvailable() {
   for (int i = 0; i < kNumCells; ++i) {
     Cell& cell = cells_[i];
     if (cell.value() == kUnset) {
       cell.computePossibleValues();
-      unassigned_cells_.push_back(&cell);
+      unassigned_cells_.insert(&cell);
     }
   }
+}
+
+#if 0
+void Board::sortCellsByAvailableCount() {
   if (unassigned_cells_.empty()) {
     return;
   }
@@ -281,11 +293,17 @@ void Board::sortCellsByAvailableCount() {
   first->printPossibleValues();
   fprintf(stdout, "\n");
 }
+#endif
 
 bool Board::assignDeterminedCells() {
   bool assigned = false;
-  for (Cell* cell : unassigned_cells_) {
-    assigned |= cell->assignIfDetermined();
+  for (auto iter = unassigned_cells_.begin(); iter != unassigned_cells_.end(); ) {
+    if ((*iter)->assignIfDetermined()) {
+      assigned = true;
+      unassigned_cells_.erase(iter++);
+    } else {
+      ++iter;
+    }
   }
   return assigned;
 }
@@ -325,8 +343,9 @@ static void run(const char* label, const char* data) {
   fprintf(stderr, "\n\nBoard %s\n", label);
   Board board;
   if (board.populate(data)) {
+    board.computeAvailable();
     while (true) {
-      board.sortCellsByAvailableCount();
+      //board.sortCellsByAvailableCount();
       if (!board.assignDeterminedCells()) {
         return;
       }

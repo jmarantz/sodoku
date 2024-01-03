@@ -9,3 +9,7 @@ leetcode.o : leetcode.cc Makefile
 clean :
 	rm -rf sodoku leetcode.o leetcode.dSYM sodoku.dSYM
 
+
+.PHONY: run
+run: sodoku
+	time ./sodoku
