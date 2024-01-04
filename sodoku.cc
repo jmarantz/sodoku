@@ -112,14 +112,7 @@ public:
     }
   }
 
-  bool assignIfDetermined() {
-    if (possible_values_.size() == 1) {
-      assert(setValue(*possible_values_.begin()));
-      assert(possible_values_.empty());
-      return true;
-    }
-    return false;
-  }
+  bool assignIfDetermined();
 
   void printPossibleValues() const {
     //fprintf(stdout, "[%d,%d]=%d: ", row_, col_, value_);
@@ -264,6 +257,36 @@ bool Cell::setValue(int value) {
   }
   // Consider also checking value is in possible_values_.
   return ret;
+}
+
+bool Cell::assignIfDetermined() {
+  if (possible_values_.size() == 1) {
+    assert(setValue(*possible_values_.begin()));
+    assert(possible_values_.empty());
+    return true;
+  }
+
+  // Sodoku cross-hatching technique, where all of the other cells in any container
+  // exclude a value this has.
+  for (int value : possible_values_) {
+    for (Container* container : containers_) {
+      bool no_other_cells_in_container_allow_value = true;
+      for (Cell* other_cell : container->cells_) {
+        if (other_cell != this &&
+            other_cell->possible_values_.find(value) != other_cell->possible_values_.end()) {
+          no_other_cells_in_container_allow_value = false;
+          break;
+        }
+      }
+      if (no_other_cells_in_container_allow_value) {
+        assert(setValue(value));
+        possible_values_.clear();
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 void Board::computeAvailable() {
