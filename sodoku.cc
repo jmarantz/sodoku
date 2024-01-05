@@ -90,6 +90,63 @@ namespace Data {
   // ["3","4","5","2","8","6","1","7","9"]
 };
 
+template<class UIntType = unsigned int>
+class SmallIntSet {
+public:
+  void insert(int value) {
+    set_ |= shift(value);
+  }
+
+  int erase(int value) {
+    UIntType shifted = shift(value);
+    int ret = (shifted & set_) != 0;
+    set_ &= ~shifted;
+    return ret;
+  }
+
+  bool contains(int value) const {
+    return (set_ & shift(value)) != 0;
+  }
+
+  SmallIntSet intersect(SmallIntSet other) {
+    SmallIntSet out;
+    out.set_ = other.set_ & set_;
+    return out;
+  }
+
+  bool empty() const { return set_ == 0; }
+  size_t size() const { return std::popcount(set_); }
+  void clear() { set_ = 0; }
+
+  void foreach(std::function<bool(int)> fn) const {
+    for (int index = 0, sz = size(), found = 0; found < sz; ++index) {
+      if (contains(index)) {
+        ++found;
+        if (!fn(index)) {
+          return;
+        }
+      }
+    }
+  }
+
+  int front() {
+    const int sz = size();
+    int index = 0;
+    assert(sz > 0);
+    while (!contains(index)) {
+      ++index;
+    }
+    return index;
+  }
+
+private:
+  static UIntType shift(int value) {
+    return 1 << value;
+  }
+
+  UIntType set_{0};
+};
+
 class Cell {
 public:
   void addContainer(Container* container) { containers_.push_back(container); }
@@ -127,9 +184,10 @@ public:
       fprintf(stdout, " ");
     }
     fprintf(stdout, "(");
-    for (int possible_value : possible_values_) {
+    possible_values_.foreach([] (int possible_value) -> bool {
       fprintf(stdout, "%d", possible_value);
-    }
+      return true;
+    });
     fprintf(stdout, ")");
     for (int i = 0; i < suffix_size; ++i) {
       fprintf(stdout, " ");
@@ -144,7 +202,7 @@ private:
   int value_{kUnset};
   int row_{-1};
   int col_{-1};
-  std::set<int> possible_values_;
+  SmallIntSet<> possible_values_;
   std::vector<Container*> containers_;
 };
 
@@ -171,8 +229,8 @@ public:
   const char* name() const { return name_.c_str(); }
   void setName(const char* name) { name_ = name; }
 
-  //std::set<int> values_;
-  std::set<int> available_;
+  //SmallIntSet<> values_;
+  SmallIntSet<> available_;
   std::set<Cell*> cells_;
   std::string name_;
 };
@@ -234,13 +292,8 @@ void Cell::computePossibleValues() {
     return;
   }
   assert(containers_.size() == 3);
-  std::set<int> temp;
-  std::set_intersection(containers_[0]->available_.begin(), containers_[0]->available_.end(),
-                        containers_[1]->available_.begin(), containers_[1]->available_.end(),
-                        std::inserter(temp, temp.end()));
-  possible_values_.clear();
-  std::set_intersection(containers_[2]->available_.begin(), containers_[2]->available_.end(),
-                        temp.begin(), temp.end(), std::inserter(possible_values_, possible_values_.end()));
+  possible_values_ = containers_[0]->available_.intersect(containers_[1]->available_).
+    intersect(containers_[2]->available_);
 }
 
 bool Cell::setValue(int value) {
@@ -261,19 +314,20 @@ bool Cell::setValue(int value) {
 
 bool Cell::assignIfDetermined() {
   if (possible_values_.size() == 1) {
-    assert(setValue(*possible_values_.begin()));
+    assert(setValue(possible_values_.front()));
     assert(possible_values_.empty());
     return true;
   }
 
   // Sodoku cross-hatching technique, where all of the other cells in any container
   // exclude a value this has.
-  for (int value : possible_values_) {
+  bool ret = false;
+  possible_values_.foreach([this, &ret](int value) -> bool {
     for (Container* container : containers_) {
       bool no_other_cells_in_container_allow_value = true;
       for (Cell* other_cell : container->cells_) {
         if (other_cell != this &&
-            other_cell->possible_values_.find(value) != other_cell->possible_values_.end()) {
+            other_cell->possible_values_.contains(value)) {
           no_other_cells_in_container_allow_value = false;
           break;
         }
@@ -281,12 +335,14 @@ bool Cell::assignIfDetermined() {
       if (no_other_cells_in_container_allow_value) {
         assert(setValue(value));
         possible_values_.clear();
-        return true;
+        ret = true;
+        return false;
       }
     }
-  }
+    return true;
+  });
 
-  return false;
+  return ret;
 }
 
 void Board::computeAvailable() {
