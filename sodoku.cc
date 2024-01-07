@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -67,7 +68,7 @@ namespace Data {
     "...2759..";
 
   /*
----------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
 |       5            3            4      |       6            7            8      |       9            1            2      |
 |       6            7            2      |       1            9            5      |       3            4            8      |
 |       1            9            8      |       3            4            2      |       5            6            7      |
@@ -384,21 +385,22 @@ Status Cell::reduce() {
   // exclude a value this has.
   Status ret = Status::NoProgress;
   possible_values_.foreach([this, &ret](int value) -> bool {
+    bool no_other_cells_in_containers_allow_value = true;
     for (Container* container : containers_) {
-      bool no_other_cells_in_container_allow_value = true;
       for (Cell* other_cell : container->cells_) {
         if (other_cell != this &&
             (other_cell->value_ == value ||
              other_cell->possible_values_.contains(value))) {
-          no_other_cells_in_container_allow_value = false;
-          break;
+          no_other_cells_in_containers_allow_value = false;
+          return true;
         }
       }
-      if (no_other_cells_in_container_allow_value) {
-        assert(setValue(value));
-        ret = Status::Assigned;
-        return false;           // Stop the iteration
-      }
+    }
+    if (no_other_cells_in_containers_allow_value) {
+      possible_values_.clear();
+      possible_values_.insert(value);
+      ret = Status::Simplified;
+      return false;           // Stop the iteration
     }
     return true;                // Continue the iteration
   });
