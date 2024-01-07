@@ -108,6 +108,14 @@ public:
     return (set_ & shift(value)) != 0;
   }
 
+  bool contains(SmallIntSet other) const {
+    return (set_ & other.set_) == other.set_;
+  }
+
+  void erase(SmallIntSet other) const {
+    set_ &= ~other.set_;
+  }
+
   SmallIntSet intersect(SmallIntSet other) {
     SmallIntSet out;
     out.set_ = other.set_ & set_;
@@ -336,10 +344,10 @@ bool Cell::assignIfDetermined() {
         assert(setValue(value));
         possible_values_.clear();
         ret = true;
-        return false;
+        return false;           // Stop the iteration
       }
     }
-    return true;
+    return true;                // Continue the iteration
   });
 
   return ret;
