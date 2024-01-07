@@ -66,6 +66,22 @@ namespace Data {
     "........6"
     "...2759..";
 
+  /*
+---------------------------------------------------------------------------------------------------------------------------
+|       5            3            4      |       6            7            8      |       9            1            2      |
+|       6            7            2      |       1            9            5      |       3            4            8      |
+|       1            9            8      |       3            4            2      |       5            6            7      |
+----------------------------------------------------------------------------------------------------------------------------
+|       8            5            9      |       7            6            1      |       4            2            3      |
+|       4            2            6      |       8            5            3      |       7            9            1      |
+|       7            1            3      |       9            2            4      |       8            5            6      |
+----------------------------------------------------------------------------------------------------------------------------
+|       9            6            1      |       5            3            7      |       2            8            4      |
+|       2            8            7      |       4            1            9      |       6            3            5      |
+|       3            4            5      |       2            8            6      |       1            7            9      |
+----------------------------------------------------------------------------------------------------------------------------
+  */
+
 
   constexpr char puzzle8_1[] =
     ".5.....86"
@@ -90,11 +106,21 @@ namespace Data {
   // ["3","4","5","2","8","6","1","7","9"]
 };
 
+enum class Status {
+  Simplified,
+  Assigned,
+  NoProgress
+};
+
 template<class UIntType = unsigned int>
 class SmallIntSet {
 public:
   void insert(int value) {
     set_ |= shift(value);
+  }
+
+  void insert(SmallIntSet that) {
+    set_ |= that.set_;
   }
 
   int erase(int value) {
@@ -112,7 +138,7 @@ public:
     return (set_ & other.set_) == other.set_;
   }
 
-  void erase(SmallIntSet other) const {
+  void erase(SmallIntSet other) {
     set_ &= ~other.set_;
   }
 
@@ -147,6 +173,8 @@ public:
     return index;
   }
 
+  void print() const { foreach([](int index) -> bool { fprintf(stdout, "%d", index); return true; }); }
+
 private:
   static UIntType shift(int value) {
     return 1 << value;
@@ -177,7 +205,11 @@ public:
     }
   }
 
-  bool assignIfDetermined();
+  // Run a heuristics and algorithms on this cell, returning:
+  //  Assigned if this cell has now been assigned, and thus may be removed from unassgned set
+  //  Simplified if the cells set of possibilties has been reduced, but it is not yet assigned
+  //  NoProgress
+  Status reduce();
 
   void printPossibleValues() const {
     //fprintf(stdout, "[%d,%d]=%d: ", row_, col_, value_);
@@ -202,8 +234,25 @@ public:
     }
   }
 
+  void printTerse() const {
+    fprintf(stdout, "[%d,%d]:", row_, col_);
+    if (value_ == kUnset) {
+      fprintf(stdout, "(");
+      possible_values_.print();
+      fprintf(stdout, ") ");
+    } else {
+      fprintf(stdout, "%d ", value_);
+    }
+  }
+
   void removeAvailable(int value) {
-    possible_values_.erase(value);
+    if (possible_values_.contains(value)) {
+      printTerse();
+      fprintf(stdout, " removing %d --> ", value);
+      possible_values_.erase(value);
+      printTerse();
+      fprintf(stdout, "\n");
+    }
   }
 
 private:
@@ -276,7 +325,7 @@ public:
   bool populate(const char* values);
   void sortCellsByAvailableCount();
   void print();
-  bool assignDeterminedCells();
+  bool makeProgress();
   void computeAvailable();
 
 private:
@@ -305,7 +354,10 @@ void Cell::computePossibleValues() {
 }
 
 bool Cell::setValue(int value) {
+  fprintf(stdout, "Assign: ");
   value_ = value;
+  printTerse();
+  fprintf(stdout, "\n");
   bool ret = true;
   if (value != kUnset) {
     for (Container* container : containers_) {
@@ -315,42 +367,100 @@ bool Cell::setValue(int value) {
         ret = false;
       }
     }
+    possible_values_.clear();
   }
   // Consider also checking value is in possible_values_.
   return ret;
 }
 
-bool Cell::assignIfDetermined() {
+Status Cell::reduce() {
   if (possible_values_.size() == 1) {
     assert(setValue(possible_values_.front()));
     assert(possible_values_.empty());
-    return true;
+    return Status::Assigned;
   }
 
   // Sodoku cross-hatching technique, where all of the other cells in any container
   // exclude a value this has.
-  bool ret = false;
+  Status ret = Status::NoProgress;
   possible_values_.foreach([this, &ret](int value) -> bool {
     for (Container* container : containers_) {
       bool no_other_cells_in_container_allow_value = true;
       for (Cell* other_cell : container->cells_) {
         if (other_cell != this &&
-            other_cell->possible_values_.contains(value)) {
+            (other_cell->value_ == value ||
+             other_cell->possible_values_.contains(value))) {
           no_other_cells_in_container_allow_value = false;
           break;
         }
       }
       if (no_other_cells_in_container_allow_value) {
         assert(setValue(value));
-        possible_values_.clear();
-        ret = true;
+        ret = Status::Assigned;
         return false;           // Stop the iteration
       }
     }
     return true;                // Continue the iteration
   });
 
-  return ret;
+  if (ret == Status::Assigned) {
+    return ret;
+  }
+  assert(value_ == kUnset);
+
+  // Check this cell's possible list against others in the same row/column/box for this case:
+  //     This cell:   ABCDE
+  //     Other cell1: AB
+  //     Other cell2: AB
+  //     --> change this cell's possible list to "CDE".
+  // A similare case is:
+  //     This cell: ABCDEF
+  //     Other cell1: ABC
+  //     Other cell2: ABC
+  //     Other cell3: ABC
+  //     --> change this cell's possible list to "DEF".
+  // A slightly more complex one is:
+  //     This cell: ABCDEF
+  //     Other cell1: AB
+  //     Other cell2: BC
+  //     Other cell3: AC
+  //     --> change this cell's possible list to "DEF".
+
+  // Generalizing, the way to do this is to find N cells where the
+  // union of their possible-sets is a subset of size N of this cell's
+  // possible-set. To do this we first look for cells that with
+  // possible-set that are subsets of this one.
+  std::vector<Cell*> subsets;
+  SmallIntSet<> union_of_possibilities;
+  if (possible_values_.size() == 5) {
+    fprintf(stdout, "stop here\n");
+  }
+  for (Container* container : containers_) {
+    for (Cell* cell : container->cells_) {
+      if (cell != this && cell->value_ == kUnset && possible_values_.contains(cell->possible_values_) &&
+          possible_values_.size() > cell->possible_values_.size()) {
+        subsets.push_back(cell);
+        union_of_possibilities.insert(cell->possible_values_);
+      }
+    }
+  }
+  if (!subsets.empty() && subsets.size() == union_of_possibilities.size() &&
+      union_of_possibilities.size() < possible_values_.size()) {
+    fprintf(stdout, "Pruning %ld subsets", subsets.size());
+    printTerse();
+    fprintf(stdout, "of ");
+    union_of_possibilities.print();
+    fprintf(stdout, " from ");
+    for (Cell* cell : subsets) {
+      cell->printTerse();
+    }
+    possible_values_.erase(union_of_possibilities);
+    fprintf(stdout, " --> ");
+    possible_values_.print();
+    fprintf(stdout, "\n");
+    return Status::Simplified;
+  }
+  return Status::NoProgress;
 }
 
 void Board::computeAvailable() {
@@ -382,17 +492,19 @@ void Board::sortCellsByAvailableCount() {
 }
 #endif
 
-bool Board::assignDeterminedCells() {
-  bool assigned = false;
+bool Board::makeProgress() {
+  bool progress = false;
   for (auto iter = unassigned_cells_.begin(); iter != unassigned_cells_.end(); ) {
-    if ((*iter)->assignIfDetermined()) {
-      assigned = true;
+    Status status = (*iter)->reduce();
+    if (status == Status::Assigned) {
+      progress = true;
       unassigned_cells_.erase(iter++);
     } else {
+      progress |= status == Status::Simplified;
       ++iter;
     }
   }
-  return assigned;
+  return progress;
 }
 
 void Board::print() {
@@ -431,11 +543,8 @@ static void run(const char* label, const char* data) {
   Board board;
   if (board.populate(data)) {
     board.computeAvailable();
-    while (true) {
-      //board.sortCellsByAvailableCount();
-      if (!board.assignDeterminedCells()) {
-        return;
-      }
+    board.print();
+    while (board.makeProgress()) {
       board.print();
     }
   }
